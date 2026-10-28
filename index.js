@@ -19,7 +19,6 @@ import {
   findPnpm,
   githubList,
   githubRead,
-  mergeSnapshots,
   resolvePaths,
   runPnpmInstall,
   uploadBackup,
@@ -27,11 +26,10 @@ import {
 } from './lib/core.js'
 
 const USAGE = [
-  '用法：/sync [status|push|pull|restore]',
-  '  /sync         双向同步（默认）：合并云端与本机，保留本机独有插件，先备份再覆盖',
-  '  /sync push    只上传本机配置',
-  '  /sync pull    同 /sync（拉取并合并）',
-  '  /sync restore 回到最近一次同步前的状态',
+  '用法：/sync [status|pull|push|restore]',
+  '  /sync pull    以云端更新本机（覆盖前备份，不改云端）',
+  '  /sync push    以本机覆盖云端',
+  '  /sync restore 回到最近一次拉取前的状态',
   '  /sync status  查看配置与云端快照',
 ].join('\n')
 
@@ -43,7 +41,7 @@ export const Config = z.object({
   repo: z.string().default('').volatile().description('快照仓库，格式 owner/name；建议私有仓库。'),
   branch: z.string().default('main').volatile().description('快照所在分支。'),
   path: z.string().default('dsh-sync/snapshot.json.gz').volatile().description('快照文件在仓库中的路径。'),
-  token: z.string().default('').volatile().description('GitHub PAT（contents 读写权限）。也可用环境变量 DSH_SYNC_GITHUB_TOKEN。'),
+  token: z.string().default('').role('secret').volatile().description('GitHub PAT（contents 读写权限）。也可用环境变量 DSH_SYNC_GITHUB_TOKEN。'),
 })
 
 function formatBytes(bytes) {
@@ -115,7 +113,7 @@ function createSync(config) {
         path: current.path,
       })
       if (!remote) {
-        lines.push('云端：仓库可访问，但还没有快照。运行 /sync 会先把本机上传。')
+        lines.push('云端：仓库可访问，但还没有快照。请先在另一台点「以本机覆盖云端」。')
         return { ok: true, text: lines.join('\n') }
       }
       const local = await collectSnapshot(paths)
@@ -124,7 +122,7 @@ function createSync(config) {
       lines.push(`云端插件：${(remote.snapshot.bundles ?? []).length} 个 bundle，${(remote.snapshot.dependencies ?? []).length} 个依赖`)
       lines.push(contentDigest(local) === contentDigest(remote.snapshot)
         ? '结论：两边内容一致，无需同步。'
-        : '结论：有差异，运行 /sync 合并。')
+        : '结论：有差异。用 /sync pull 接收云端，或用 /sync push 覆盖云端。')
       return { ok: true, text: lines.join('\n') }
     } catch (error) {
       lines.push(`云端：访问失败 — ${error.message}`)
@@ -193,10 +191,7 @@ function createSync(config) {
     }
 
     if (!remote) {
-      const uploaded = await push()
-      return uploaded.ok
-        ? { ok: true, text: `云端还没有快照，已把本机配置作为初始版本上传。\n\n${uploaded.text}` }
-        : uploaded
+      return { ok: false, text: '云端还没有快照。请先在要作为源的那台电脑点「以本机覆盖云端」。' }
     }
 
     if (contentDigest(local) === contentDigest(remote.snapshot)) {
@@ -222,23 +217,22 @@ function createSync(config) {
       return { ok: false, text: `上传同步前备份失败，已停止以免丢配置：${error.message}` }
     }
 
-    const { snapshot: merged, stats } = mergeSnapshots(local, remote.snapshot)
+    // Pull-only: the remote snapshot replaces this machine's plugins and
+    // settings. applySnapshot still keeps this plugin's own dependency row.
+    const merged = remote.snapshot
+    const stats = { addedBundles: [], keptLocalOnlyFiles: [] }
 
     let applied
     try {
       applied = await applySnapshot(merged, paths)
     } catch (error) {
-      return { ok: false, text: `写入合并结果失败：${error.message}\n同步前快照：${backupPath}` }
+      return { ok: false, text: `写入云端快照失败：${error.message}\n同步前快照：${backupPath}` }
     }
 
     const lines = [
-      '双向同步完成',
-      `合并：云端 ${(remote.snapshot.bundles ?? []).length} + 本机独有 ${stats.addedBundles.length} 个 bundle`,
-      `保留本机独有：${stats.addedBundles.length > 0 ? stats.addedBundles.join(', ') : '无'}`,
+      '已用云端配置更新本机',
+      `云端插件：${(remote.snapshot.bundles ?? []).length} 个 bundle（导出 ${remote.snapshot.createdAt}）`,
     ]
-    if (stats.keptLocalOnlyFiles.length > 0) {
-      lines.push(`保留本机独有文件：${stats.keptLocalOnlyFiles.join(', ')}`)
-    }
     lines.push(`同步前快照：${backupPath}（仓库 backups/ 下，可随时取回）`)
     lines.push(`本机备份：${applied.backupDir}`)
 
@@ -254,25 +248,11 @@ function createSync(config) {
       lines.push(`依赖安装失败（退出码 ${install.code ?? '?'}）：`)
       lines.push(tail(install.output))
       lines.push('', '可在 DeepSeek Harness 终端里重试：dsh plugin install')
-      lines.push('合并结果已写入本机；云端未更新，修好后再次运行 /sync 即可。')
+      lines.push('云端快照已写入本机；修好后再次运行 /sync pull 即可。')
       return { ok: false, text: lines.join('\n') }
     }
     lines.push('依赖安装完成。')
-
-    try {
-      const after = await collectSnapshot(paths)
-      const uploaded = await uploadSnapshot({
-        token: current.token,
-        repo: current.repo,
-        branch: current.branch,
-        path: current.path,
-        snapshot: after,
-        message: `cloud-sync: merged ${after.bundles.length} bundles from ${deviceName()}`,
-      })
-      lines.push(`已把合并结果推回云端（${uploaded.sha.slice(0, 7)}），另一台直接 /sync 即可。`)
-    } catch (error) {
-      lines.push(`合并结果写回云端失败：${error.message}（本机已生效，可稍后 /sync push）`)
-    }
+    lines.push('云端没有被修改；如需把本机状态推上去，请用「以本机覆盖云端」。')
 
     lines.push('', '请完全退出并重新打开 DeepSeek Harness，让新插件与设置生效。')
     return { ok: true, text: lines.join('\n') }
@@ -299,7 +279,7 @@ function createSync(config) {
       .filter((entry) => entry.name.endsWith('.json.gz'))
       .sort((left, right) => (left.name < right.name ? 1 : -1))
     if (candidates.length === 0) {
-      return { ok: false, text: '云端还没有同步前备份。第一次 /sync 时会自动创建。' }
+      return { ok: false, text: '云端还没有同步前备份。第一次 /sync pull 覆盖本机前会自动创建。' }
     }
 
     const latest = candidates[0]
@@ -366,21 +346,22 @@ function createSync(config) {
 
 export function apply(ctx, config) {
   const sync = createSync(config)
-  for (const [name, description] of [
-    ['sync', '双向同步插件与应用设置（合并 + 备份）'],
-    ['cloud-sync', '双向同步插件与应用设置（/sync 的旧名字）'],
-  ]) {
-    ctx.effect(() => ctx.commands.register({
-      definitionId: `dsh-cloud-sync:${name}`,
-      name,
-      description,
-      input: { hint: '[status|push|pull]' },
-      handler: (invocation) => sync.run(invocation.rawInput),
-    }))
-  }
+  // Register this row's volatile Config as a settings namespace so a Client page
+  // can read and write repo/branch/path/token through ctx.remote.settings.
+  ctx.inject(['settings'], (child) => {
+    child.effect(() => child.settings.configure({ auto: true }, ctx.fiber))
+  })
+  ctx.effect(() => ctx.commands.register({
+    definitionId: 'dsh-cloud-sync:sync',
+    name: 'sync',
+    description: '同步插件与应用设置（pull 拉取 / push 上传）',
+    input: { hint: '[status|push|pull|restore]' },
+    hidden: true,
+    handler: (invocation) => sync.run(invocation.rawInput),
+  }))
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'cloud_sync',
-    description: 'Inspect or upload this profile\'s plugins and settings through the GitHub cloud-sync repository. Two-way merging (`/sync`) is user-only: it reinstalls dependencies and asks for a restart.',
+    description: 'Inspect or upload this profile\'s plugins and settings through the GitHub cloud-sync repository. Pulling from the cloud is user-only and runs through the /sync pull command because it reinstalls dependencies.',
     parameters: {
       action: {
         type: 'string',
