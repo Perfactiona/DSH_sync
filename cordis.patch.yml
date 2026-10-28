@@ -1,0 +1,5 @@
+# dsh-cloud-sync bundle patch: one Host row, configured entirely through the
+# plugin manager's settings form (or directly in this profile's patch).
+- insert:
+    - id: cloud-sync
+      name: dsh-cloud-sync

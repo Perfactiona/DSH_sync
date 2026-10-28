@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Cloud Sync",
+    "description": "Sync this profile's plugins and settings between machines through a GitHub repository."
+  }
+}

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Cloud Sync">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#sky)"/>
+  <path d="M22 40h20.5a7.5 7.5 0 0 0 .9-14.95A11 11 0 0 0 22.4 27.2 6.4 6.4 0 0 0 22 40Z"
+        fill="none" stroke="#ffffff" stroke-width="2.6" stroke-linejoin="round"/>
+  <path d="M26 31.5v7.2m0 0-3-3m3 3 3-3" fill="none" stroke="#ffffff" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M38 36.5v-7.2m0 0-3 3m3-3 3 3" fill="none" stroke="#ffffff" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
