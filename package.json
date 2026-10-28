@@ -1,7 +1,7 @@
 {
   "name": "dsh-cloud-sync",
-  "version": "0.4.0",
-  "description": "Pull or push DeepSeek Harness plugins and settings between machines through a GitHub repository",
+  "version": "0.6.0",
+  "description": "Pull or push DeepSeek Harness plugins and settings between machines through a GitHub repository, locally authored plugin sources included",
   "type": "module",
   "license": "MIT",
   "keywords": ["dsh", "dsh-plugin", "deepseek-harness", "sync", "backup"],

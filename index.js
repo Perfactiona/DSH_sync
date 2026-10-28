@@ -24,6 +24,7 @@ import {
   uploadBackup,
   uploadSnapshot,
 } from './lib/core.js'
+import { indexOf, readIndex, readSnapshot, treesEqual, writeSnapshot } from './lib/incr.js'
 
 const USAGE = [
   '用法：/sync [status|pull|push|restore]',
@@ -106,21 +107,21 @@ function createSync(config) {
 
     lines.push(`仓库：${current.repo}@${current.branch} → ${current.path}`)
     try {
-      const remote = await downloadSnapshot({
+      const remote = await readIndex({
         token: current.token,
         repo: current.repo,
         branch: current.branch,
-        path: current.path,
+        configPath: current.path,
       })
       if (!remote) {
         lines.push('云端：仓库可访问，但还没有快照。请先在另一台点「以本机覆盖云端」。')
         return { ok: true, text: lines.join('\n') }
       }
       const local = await collectSnapshot(paths)
-      lines.push(`云端快照：${formatBytes(remote.bytes)}，导出 ${remote.snapshot.createdAt}`)
-      lines.push(`来源设备：${remote.snapshot.source?.device ?? remote.snapshot.source?.mergedBy?.device ?? '?'}`)
-      lines.push(`云端插件：${(remote.snapshot.bundles ?? []).length} 个 bundle，${(remote.snapshot.dependencies ?? []).length} 个依赖`)
-      lines.push(contentDigest(local) === contentDigest(remote.snapshot)
+      lines.push(`云端快照：${Object.keys(remote.tree).length} 个文件，导出 ${remote.createdAt}`)
+      lines.push(`来源设备：${remote.source?.device ?? '?'}`)
+      lines.push(`云端插件：${(remote.bundles ?? []).length} 个 bundle，${(remote.dependencies ?? []).length} 个依赖`)
+      lines.push(treesEqual(indexOf(local).tree, remote.tree)
         ? '结论：两边内容一致，无需同步。'
         : '结论：有差异。用 /sync pull 接收云端，或用 /sync push 覆盖云端。')
       return { ok: true, text: lines.join('\n') }
@@ -136,22 +137,21 @@ function createSync(config) {
     const paths = resolvePaths()
     try {
       const snapshot = await collectSnapshot(paths)
-      const result = await uploadSnapshot({
+      const result = await writeSnapshot({
         token: current.token,
         repo: current.repo,
         branch: current.branch,
-        path: current.path,
+        configPath: current.path,
         snapshot,
-        message: `cloud-sync: ${snapshot.bundles.length} bundles from ${deviceName()}`,
       })
       return {
         ok: true,
         text: [
           '已上传本机配置',
           `仓库：${current.repo}@${current.branch}`,
-          `文件：${current.path}（${formatBytes(result.bytes)}，${result.created ? '新建' : '更新'}）`,
+          `本次上传：${result.uploaded} 个文件（未变化的 ${result.skipped} 个跳过）`,
           `内容：${snapshot.bundles.length} 个 bundle，${snapshot.dependencies.length} 个依赖`,
-          `提交：${result.sha.slice(0, 7)}`,
+          `索引：${current.path.replace(/[^/]*$/, '')}state.json`,
           '',
           '不含对话、工作区、任务、缓存与凭据。',
         ].join('\n'),
@@ -180,11 +180,11 @@ function createSync(config) {
 
     let remote
     try {
-      remote = await downloadSnapshot({
+      remote = await readSnapshot({
         token: current.token,
         repo: current.repo,
         branch: current.branch,
-        path: current.path,
+        configPath: current.path,
       })
     } catch (error) {
       return { ok: false, text: `读取云端快照失败：${error.message}` }
@@ -194,13 +194,13 @@ function createSync(config) {
       return { ok: false, text: '云端还没有快照。请先在要作为源的那台电脑点「以本机覆盖云端」。' }
     }
 
-    if (contentDigest(local) === contentDigest(remote.snapshot)) {
+    if (treesEqual(indexOf(local).tree, indexOf(remote).tree)) {
       return {
         ok: true,
         text: [
           '两边已经一致，无需同步。',
-          `快照时间：${remote.snapshot.createdAt}`,
-          `插件：${(remote.snapshot.bundles ?? []).length} 个 bundle`,
+          `快照时间：${remote.createdAt}`,
+          `插件：${(remote.bundles ?? []).length} 个 bundle`,
         ].join('\n'),
       }
     }
@@ -219,7 +219,7 @@ function createSync(config) {
 
     // Pull-only: the remote snapshot replaces this machine's plugins and
     // settings. applySnapshot still keeps this plugin's own dependency row.
-    const merged = remote.snapshot
+    const merged = remote
     const stats = { addedBundles: [], keptLocalOnlyFiles: [] }
 
     let applied
@@ -231,7 +231,7 @@ function createSync(config) {
 
     const lines = [
       '已用云端配置更新本机',
-      `云端插件：${(remote.snapshot.bundles ?? []).length} 个 bundle（导出 ${remote.snapshot.createdAt}）`,
+      `云端插件：${(remote.bundles ?? []).length} 个 bundle（导出 ${remote.createdAt}）`,
     ]
     lines.push(`同步前快照：${backupPath}（仓库 backups/ 下，可随时取回）`)
     lines.push(`本机备份：${applied.backupDir}`)
