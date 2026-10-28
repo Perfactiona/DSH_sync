@@ -96,8 +96,13 @@ function createSync(config) {
     lines.push(`本机插件：${bundles.length} 个 bundle，${dependencies.length} 个依赖`)
 
     if (!current.repo || !current.token) {
-      lines.push('云端：未配置（缺 repo 或 token）')
-      lines.push('在 设置 → 插件 → 云同步 中填写后，点输入框旁的「云同步」按钮或运行 /sync。')
+      if (current.repo) {
+        lines.push(`仓库：${current.repo}@${current.branch}`)
+        lines.push('云端：缺 token。请在 设置 → 插件 → 云同步 的配置里粘贴 PAT。')
+      } else {
+        lines.push('云端：未配置仓库')
+        lines.push('在 设置 → 插件 → 云同步 中填写 repo 与 token 后，点输入框旁的「云同步」按钮。')
+      }
       return { ok: false, text: lines.join('\n') }
     }
 
